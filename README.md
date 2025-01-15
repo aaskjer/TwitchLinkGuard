@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <h1>TwitchLinkGuard - Block unwanted links</h1>
+  <img src="https://github.com/aaskjer/TwitchLinkGuard/blob/media/aaa471c40f68aa732e71eb76354b5e1af65ff966.jpeg?raw=true">
   <p>
     <strong>TwitchLinkGuard</strong> is designed to help Twitch streamers and moderators maintain a safe and clean chat environment.
     TLG provides comprehensive tools for automated moderation, making it an essential solution for Twitch streamers looking to enhance and streamline their chat moderation.
