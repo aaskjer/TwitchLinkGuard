@@ -2,9 +2,6 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>TwitchLinkGuard - Block unwanted links</title>
-  
-
   <h1>TwitchLinkGuard - Block unwanted links</h1>
   <p>
     <strong>TwitchLinkGuard</strong> is designed to help Twitch streamers and moderators maintain a safe and clean chat environment.
