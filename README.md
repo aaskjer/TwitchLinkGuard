@@ -250,7 +250,7 @@
     <!-- Update these image URLs to your actual assets if available -->
     <a href="https://www.twitch.tv/aaskjer">
       <img src="upload://sM6sDP2FtFeSXmO2Fyb4eq4HNdG.png" alt="Twitch">
-    </a>
+    </a>|
     <a href="https://discord.com/channels/834650675224248362/1321581223746863207">
       <img src="upload://mi4Bb9SNcd3ozvii9RBuHB5okMC.png" alt="Discord">
     </a>
