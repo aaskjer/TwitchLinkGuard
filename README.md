@@ -3,53 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>TwitchLinkGuard - Block unwanted links</title>
-  <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 20px auto;
-      max-width: 900px;
-      line-height: 1.5;
-    }
-    h1, h2, h3 {
-      border-bottom: 1px solid #ccc;
-      padding-bottom: 0.3em;
-    }
-    table {
-      border-collapse: collapse;
-      width: 100%;
-      margin: 1em 0;
-    }
-    table, th, td {
-      border: 1px solid #ddd;
-    }
-    th, td {
-      padding: 0.75em;
-      text-align: left;
-      vertical-align: top;
-    }
-    code, pre {
-      background-color: #f5f5f5;
-      padding: 2px 4px;
-    }
-    .highlight {
-      background-color: #ffffcc;
-    }
-    .note {
-      background: #e0f7fa;
-      padding: 10px;
-      border-left: 3px solid #00796b;
-      margin: 1em 0;
-    }
-    .icon-links img {
-      max-width: 24px;
-      vertical-align: middle;
-    }
-    .icon-links a {
-      margin-right: 8px;
-    }
-  </style>
-</head>
-<body>
+  
 
   <h1>TwitchLinkGuard - Block unwanted links</h1>
   <p>
