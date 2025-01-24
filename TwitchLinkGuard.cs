@@ -7,6 +7,14 @@ using System.Text.RegularExpressions;
 
 public class CPHInline
 {
+	private bool IsValidTwitchUsername(string username)
+	{
+		if (string.IsNullOrEmpty(username)) return false;
+
+		string pattern = @"^[a-zA-Z0-9_]{4,25}$";
+		return Regex.IsMatch(username, pattern);
+	}
+
     ///////////////////////////////////////////////////////////////////////////////
     // Precompiled Regex patterns
     ///////////////////////////////////////////////////////////////////////////////
@@ -48,7 +56,6 @@ public class CPHInline
             {
                 sb.Append(c);
             }
-            // If it is a combining mark, skip it
         }
 
         // 3) Normalize back to FormC
@@ -114,37 +121,32 @@ public class CPHInline
 
     ///////////////////////////////////////////////////////////////////////////////
     // Checks against a list of defined blocked endings (TLDs)
-    // Only returns if TLD is explicitly in suspiciousEndings
     ///////////////////////////////////////////////////////////////////////////////
     private string GetSuspiciousEnding(string input, List<string> suspiciousEndings)
     {
-        // 1) Try matching domain from a URL
         var domainMatch = Regex.Match(input, @"(?:https?:\/\/)?([\w\-]+\.[a-zA-Z]{2,})(\/[\w\-\/]*)?", RegexOptions.IgnoreCase);
         if (domainMatch.Success)
         {
             string domain = domainMatch.Groups[1].Value;
-            // 2) Check if domain ends with any suspiciousEnding
             foreach (string ending in suspiciousEndings)
             {
                 string pattern = $@"{Regex.Escape(ending)}$";
                 if (Regex.IsMatch(domain, pattern, RegexOptions.IgnoreCase))
                 {
-                    return ending; // Confirm suspicious TLD is part of the domain
+                    return ending;
                 }
             }
         }
 
-        // 3) If no domain match, check entire input for any suspicious endings
         foreach (string ending in suspiciousEndings)
         {
             string pattern = $@"\b{Regex.Escape(ending)}\b";
             if (Regex.IsMatch(input, pattern, RegexOptions.IgnoreCase))
             {
-                return ending; // Return the first match
+                return ending;
             }
         }
 
-        // If neither step found a listed TLD, return null
         return null;
     }
 
@@ -153,12 +155,10 @@ public class CPHInline
     ///////////////////////////////////////////////////////////////////////////////
     private bool IsObfuscatedMessage(string message, List<string> suspiciousEndings)
     {
-        // e.g., "my dot com" or "my.[ com"
         string tldPattern = string.Join("|", suspiciousEndings).Replace(".", "");
         string obfuscationPattern =
             @"\b[\w\-]+(?:[\s\[\]{}()]*dot[\s\[\]{}()]*|[\s\[\]{}()]*\.[\s\[\]{}()]*)(?:" + tldPattern + @")\b";
 
-        // Also check for voucher codes
         MatchCollection voucherMatches = VoucherCodeRegex.Matches(message);
         if (voucherMatches.Count > 0)
         {
@@ -166,7 +166,7 @@ public class CPHInline
             {
                 string voucherCode = voucherMatch.Value;
                 CPH.LogInfo($"TLG LOG: Detected voucher code: '{voucherCode}'");
-                return true; // treat voucher code as obfuscated
+                return true;
             }
         }
 
@@ -181,34 +181,65 @@ public class CPHInline
         return TwitchBlockedPattern.IsMatch(message);
     }
 
+	private static HashSet<string> processedMessageIds = new HashSet<string>();
+
     ///////////////////////////////////////////////////////////////////////////////
     public bool Execute()
-    {
-        //----------------------------------------------------------------
-        // 1) Retrieve basic arguments
-        //----------------------------------------------------------------
-        string input     = args["message"].ToString();
-        string user      = args["user"].ToString();
-        string messageId = args["msgId"].ToString();
-        // If it starts with "!", skip moderation (command)
-        if (input.StartsWith("!, ||"))
-        {
-            CPH.LogDebug($"Skipping moderation. Message is a command: {input}");
-            return true;
-        }
+		{
+	   //----------------------------------------------------------------
+		// 1) Retrieve basic arguments
+		//----------------------------------------------------------------
+		string input = args["message"].ToString();
+		string user = args["user"].ToString();
+		string messageId = args.ContainsKey("msgId") ? args["msgId"].ToString() : string.Empty;
+
+		// Prevent duplicate processing of the same message
+		if (!string.IsNullOrEmpty(messageId) && processedMessageIds.Contains(messageId))
+		{
+			CPH.LogDebug($"TLG LOG: Skipping duplicate event for message ID: {messageId}");
+			return true; // Skip further processing
+		}
+		processedMessageIds.Add(messageId);
+
+		// Validate Twitch username before proceeding
+		if (!IsValidTwitchUsername(user))
+		{
+			CPH.LogError($"TLG LOG: Invalid username detected: '{user}'. Skipping action.");
+			return true; // Prevent further processing
+		}
+
+		//----------------------------------------------------------------
+		// 2) Handle any required actions (e.g., Twitch API, if applicable)
+		//----------------------------------------------------------------
+		try
+		{
+			// Example placeholder for additional actions
+			CPH.LogDebug($"TLG LOG: Successfully validated and prepared user '{user}'.");
+		}
+		catch (Exception ex)
+		{
+			CPH.LogError($"TLG LOG: Unexpected error while processing user '{user}': {ex.Message}");
+			return true; // Safely stop further processing
+		}
+
         // Possibly retrieve a permit user if you’re using that system
         string permitUser = CPH.GetGlobalVar<string>("permitUser", false);
+
         bool sendAction = false;
         CPH.TryGetArg("sendAction", out sendAction);
+
         bool useBot = false;
         CPH.TryGetArg("useBot", out useBot);
+
         // Roles
         bool isModerator   = false;
         bool isVip         = false;
         bool isSubscribed  = false;
+
         CPH.TryGetArg("isSubscribed", out isSubscribed);
         CPH.TryGetArg("isVip", out isVip);
         CPH.TryGetArg("isModerator", out isModerator);
+
         // Whether to skip moderation for VIP or Sub
         bool skipVipModeration = true;  // default => VIP exempt
         bool skipSubModeration = false; // default => Sub is not exempt
@@ -216,15 +247,18 @@ public class CPHInline
             skipVipModeration = Convert.ToBoolean(args["skipVipModeration"]);
         if (args.ContainsKey("skipSubModeration"))
             skipSubModeration = Convert.ToBoolean(args["skipSubModeration"]);
+
         // Additional roles checks
         CPH.TryGetArg("groupName", out string groupName);
         CPH.TryGetArg("userName", out string userName);
+
         // If `useTimeout = true`, we do timeouts. If false, we do bans.
         bool useTimeout = false;
         if (args.ContainsKey("useTimeout"))
         {
             useTimeout = Convert.ToBoolean(args["useTimeout"]);
         }
+
         // For timeouts
         int duration = 600; // default = 10 minutes
         if (args.ContainsKey("duration"))
@@ -244,6 +278,7 @@ public class CPHInline
         //----------------------------------------------------------------
         // 3) Check trusted groups, bot user, mod, etc.
         //----------------------------------------------------------------
+
         // a) Check group
         bool userInGroup = false;
         if (!string.IsNullOrEmpty(groupName))
@@ -262,11 +297,13 @@ public class CPHInline
                 }
             }
         }
+
         if (userInGroup)
         {
             CPH.LogDebug($"TLG LOG: '{userName}' is in an exempt group => skip moderation.");
             return true;
         }
+
         // b) Check if user is the bot
         var botInfo = CPH.TwitchGetBot();
         string botName = botInfo?.UserName ?? "";
@@ -275,24 +312,28 @@ public class CPHInline
             CPH.LogDebug($"TLG LOG: '{user}' is the Streamer.bot bot => skip moderation.");
             return true;
         }
+
         // c) Moderator => skip
         if (isModerator)
         {
             CPH.LogDebug($"TLG LOG: '{user}' is a Moderator => skip moderation.");
             return true;
         }
+
         // d) Time-based permit => skip
         if (!string.IsNullOrEmpty(permitUser) && user.Equals(permitUser, StringComparison.OrdinalIgnoreCase))
         {
             CPH.LogDebug($"TLG LOG: '{user}' has a permit => skip moderation.");
             return true;
         }
+
         // e) VIP => skip if skipVipModeration = true
         if (isVip && skipVipModeration)
         {
             CPH.LogDebug($"TLG LOG: '{user}' is VIP + skipVipModeration => skip.");
             return true;
         }
+
         // f) Sub => skip if skipSubModeration = true
         if (isSubscribed && skipSubModeration)
         {
@@ -392,24 +433,24 @@ public class CPHInline
         //----------------------------------------------------------------
         // 7) Additional messages
         //----------------------------------------------------------------
-        string msgUrlDeleteTemplate   = args.ContainsKey("msgUrlDelete")   ? args["msgUrlDelete"].ToString()   : "";
-        string msgUrlDelete           = msgUrlDeleteTemplate.Replace("{user}", user);
-        string msgUrlBanTemplate      = args.ContainsKey("msgUrlBan")      ? args["msgUrlBan"].ToString()      : "";
-        string msgUrlBan              = msgUrlBanTemplate.Replace("{user}", user);
-        string msgObfuscatedTemplate   = args.ContainsKey("msgObfuscated")   ? args["msgObfuscated"].ToString()   : "";
-        string msgObfuscated           = msgObfuscatedTemplate.Replace("{user}", user);
+        string msgUrlDeleteTemplate   	= args.ContainsKey("msgUrlDelete")   ? args["msgUrlDelete"].ToString()   : "";
+        string msgUrlDelete           	= msgUrlDeleteTemplate.Replace("{user}", user);
+        string msgUrlBanTemplate      	= args.ContainsKey("msgUrlBan")      ? args["msgUrlBan"].ToString()      : "";
+        string msgUrlBan              	= msgUrlBanTemplate.Replace("{user}", user);
+        string msgObfuscatedTemplate   	= args.ContainsKey("msgObfuscated")   ? args["msgObfuscated"].ToString()   : "";
+        string msgObfuscated           	= msgObfuscatedTemplate.Replace("{user}", user);
         string msgObfuscatedBanTemplate = args.ContainsKey("msgObfuscatedBan") ? args["msgObfuscatedBan"].ToString() : "";
         string msgObfuscatedBan         = msgObfuscatedBanTemplate.Replace("{user}", user);
-        string msgIsBlockedTemplate   = args.ContainsKey("msgIsBlocked")   ? args["msgIsBlocked"].ToString()   : "";
-        string msgIsBlocked           = msgIsBlockedTemplate.Replace("{user}", user);
-        string msgIsBlockedBanTemplate = args.ContainsKey("msgIsBlockedBan") ? args["msgIsBlockedBan"].ToString() : "";
-        string msgIsBlockedBan         = msgIsBlockedBanTemplate.Replace("{user}", user);
-        string msgTwitchWarnTemplate = args.ContainsKey("msgTwitchWarn") ? args["msgTwitchWarn"].ToString() : "";
-        string msgTwitchWarn         = msgTwitchWarnTemplate.Replace("{user}", user);
-        string msgVoucherBanTemplate = args.ContainsKey("msgVoucherBan") ? args["msgVoucherBan"].ToString() : "";
-        string msgVoucherBan         = msgVoucherBanTemplate.Replace("{user}", user);
-        string msgTimeOutTemplate = args.ContainsKey("msgTimeOut") ? args["msgTimeOut"].ToString() : "";
-        string msgTimeOut         = msgTimeOutTemplate.Replace("{user}", user);
+        string msgIsBlockedTemplate   	= args.ContainsKey("msgIsBlocked")   ? args["msgIsBlocked"].ToString()   : "";
+        string msgIsBlocked           	= msgIsBlockedTemplate.Replace("{user}", user);
+        string msgIsBlockedBanTemplate 	= args.ContainsKey("msgIsBlockedBan") ? args["msgIsBlockedBan"].ToString() : "";
+        string msgIsBlockedBan         	= msgIsBlockedBanTemplate.Replace("{user}", user);
+        string msgTwitchWarnTemplate 	= args.ContainsKey("msgTwitchWarn") ? args["msgTwitchWarn"].ToString() : "";
+        string msgTwitchWarn         	= msgTwitchWarnTemplate.Replace("{user}", user);
+        string msgVoucherBanTemplate 	= args.ContainsKey("msgVoucherBan") ? args["msgVoucherBan"].ToString() : "";
+        string msgVoucherBan         	= msgVoucherBanTemplate.Replace("{user}", user);
+        string msgTimeOutTemplate 		= args.ContainsKey("msgTimeOut") ? args["msgTimeOut"].ToString() : "";
+        string msgTimeOut         		= msgTimeOutTemplate.Replace("{user}", user);
 
         //----------------------------------------------------------------
         // 8) Check for voucher codes => punish only if hasEnoughKeywords
@@ -420,15 +461,14 @@ public class CPHInline
             foreach (Match match in voucherMatches)
             {
                 string voucherCode = match.Value;
-                CPH.LogInfo($"TLG LOG: Detected voucher code: {voucherCode}");
+                CPH.LogInfo($"TLG LOG: Detected voucher code: '{voucherCode}'");
 
                 if (hasEnoughKeywords)
                 {
                     // Build reason
-                    string voucherReason =
-                        $"Voucher-Code detected. Flagged as potential advertising spam. " +
-                        $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
-                        $"TLD: {(globalEndingCheck ?? "None")}";
+					string voucherReason = $"Voucher-Code detected. Message: \"{input}\" " +
+										   $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
+										   $"TLD: {(globalEndingCheck ?? "None")}";
 
                     // If useTimeout => do timeout. Otherwise => ban
                     if (useTimeout)
@@ -475,7 +515,7 @@ public class CPHInline
             if (hasEnoughKeywords)
             {
                 string blockedBanReason =
-                    $"Flagged as potential advertising spam message. " +
+                    $"Flagged as potential advertising spam message: \"{input}\"" +
                     $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
                     $"TLD: {(globalEndingCheck ?? "None")}";
 
@@ -543,7 +583,7 @@ public class CPHInline
                 {
                     // Build reason
                     string reason =
-                        $"Flagged as potential advertising spam message. " +
+                        $"Flagged as potential advertising spam message: \"{input}\" " +
                         $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
                         $"TLD: {(globalEndingCheck ?? "None")}";
 
@@ -558,8 +598,8 @@ public class CPHInline
                         CPH.TwitchTimeoutUser(user, duration, reason, useBot);
                         CPH.LogInfo($"TLG LOG: Timed out '{user}' => URL + enough keywords. Reason: {reason}");
                     }
-                    else
-                    {
+                else
+                {
                         // Ban
                         if (sendAction)
                             CPH.SendAction(msgUrlBan, useBot);
@@ -608,7 +648,7 @@ public class CPHInline
             if (hasEnoughKeywords)
             {
                 string obfuscatedBanReason =
-                    $"Obfuscation detected, flagged as potential advertising spam message. " +
+                    $"Obfuscation detected, flagged as potential advertising spam message: \"{input}\" " +
                     $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
                     $"TLD: {(globalEndingCheck ?? "None")}";
 
@@ -657,57 +697,101 @@ public class CPHInline
             return true;
         }
 
-        //----------------------------------------------------------------
-        // 12) Ban and auto deny the auto-held message
-        //----------------------------------------------------------------
-        if (hasEnoughKeywords || globalEndingCheck != null)
-        {
-            // Additional context logging
-            string category  = args.ContainsKey("category")  ? args["category"].ToString()  : "Unknown category";
-            string heldAt    = args.ContainsKey("heldAt")    ? args["heldAt"].ToString()    : "Unknown time";
-            string rawInput  = args.ContainsKey("rawInput")  ? args["rawInput"].ToString()  : input;
-            string status    = args.ContainsKey("status")    ? args["status"].ToString()    : "Unknown status";
-            int level        = args.ContainsKey("level")     ? Convert.ToInt32(args["level"]) : -1;
+		//----------------------------------------------------------------
+		// 12) Handle Auto-Held Messages with Updated Logic
+		//----------------------------------------------------------------
+		if (!string.IsNullOrEmpty(messageId) && CPH.TwitchApproveAutoHeldMessage(messageId))
+		{
+			// Validate user
+			if (!IsValidTwitchUsername(user))
+			{
+				CPH.LogError($"TLG LOG: Invalid username detected: '{user}'. Skipping auto-held moderation.");
+				return true;
+			}
 
-            var inputWords   = args.Keys
-                               .Where(k => k.StartsWith("input") && int.TryParse(k.Substring(5), out _))
-                               .Select(k => $"{k}: {args[k]}");
-            string inputWordsStr = string.Join(", ", inputWords);
+			try
+			{
+				// Construct the reason for denial
+				string denyAutoReason =
+					$"Flagged as potential advertising spam message: \"{input}\" " +
+					$"Matched: [{string.Join(", ", matchedKeywords)}]. " +
+					$"TLD: {(globalEndingCheck ?? "None")}";
 
-            try
-            {
-                string denyAutoReason =
-                    $"Flagged as potential advertising spam message. " +
-                    $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
-                    $"TLD: {(globalEndingCheck ?? "None")}";
+				// Explicitly deny the auto-held message
+				if (!CPH.TwitchDenyAutoHeldMessage(messageId))
+				{
+					CPH.LogError($"TLG LOG: Failed to deny auto-held message with ID: {messageId}");
+					return true; // Stop further handling if denial fails
+				}
 
-                // Deny the AutoHeld message
-                if (sendAction)
-                    CPH.SendAction(msgUrlDelete, useBot);
-                else
-                    CPH.SendMessage(msgUrlDelete, useBot);
+				// Delete the denied message
+				CPH.TwitchDeleteChatMessage(messageId, useBot);
 
-                CPH.TwitchDenyAutoHeldMessage(messageId);
-                {
-                    // Those messages always considered as potentially harmful => Ban
-                    CPH.TwitchBanUser(user, denyAutoReason, useBot);
-                    CPH.LogInfo($"TLG LOG: Banned '{user}' => auto-held + {matchedKeywordCount} keywords. Reason: {denyAutoReason}");
-                }
+				// Check for sufficient keywords or suspicious TLD
+				if (hasEnoughKeywords)
+				{
+					if (useTimeout)
+					{
+						// Timeout logic
+						if (sendAction)
+							CPH.SendAction(msgTimeOut, useBot);
+						else
+							CPH.SendMessage(msgTimeOut, useBot);
 
-                CPH.TwitchDeleteChatMessage(messageId, useBot);
-                CPH.LogInfo(
-                    $"TLG LOG: AutoMod denied => user '{user}', rawInput='{rawInput}', " +
-                    $"category='{category}', heldAt='{heldAt}', level='{level}', status='{status}', " +
-                    $"keywordsFound='{matchedKeywordCount}', TLD='{globalEndingCheck}', " +
-                    $"inputWords='[{inputWordsStr}]'"
-                );
-            }
-            catch (Exception ex)
-            {
-                CPH.LogError($"TLG LOG: Error handling AutoMod for '{user}': {ex.Message}");
-            }
-            return true;
-        }
+						CPH.TwitchTimeoutUser(user, duration, denyAutoReason, useBot);
+						CPH.LogInfo($"TLG LOG: Timed out '{user}' => auto-held + {matchedKeywordCount} keywords. Reason: {denyAutoReason}");
+					}
+					else
+					{
+						// Ban logic
+						if (sendAction)
+							CPH.SendAction(msgUrlBan, useBot);
+						else
+							CPH.SendMessage(msgUrlBan, useBot);
+
+						CPH.TwitchBanUser(user, denyAutoReason, useBot);
+						CPH.LogInfo($"TLG LOG: Banned '{user}' => auto-held + {matchedKeywordCount} keywords. Reason: {denyAutoReason}");
+					}
+				}
+				else if (!string.IsNullOrEmpty(globalEndingCheck))
+				{
+					// Handle suspicious TLD without enough keywords
+					if (sendAction)
+						CPH.SendAction(msgUrlDelete, useBot);
+					else
+						CPH.SendMessage(msgUrlDelete, useBot);
+
+					if (useTwitchWarnFlag)
+					{
+						CPH.TwitchWarnUser(user, msgTwitchWarn);
+						CPH.LogInfo($"TLG LOG: Warned '{user}' => suspicious TLD '{globalEndingCheck}' but not enough keywords.");
+					}
+
+					CPH.LogInfo($"TLG LOG: Auto-held message denied and deleted for TLD '{globalEndingCheck}' without enough keywords.");
+				}
+				else
+				{
+					// Log only if neither keywords nor TLD trigger further action
+					CPH.LogInfo($"TLG LOG: Auto-held message denied and deleted. No action taken (keywords/TLD insufficient).");
+				}
+
+				// Log additional context
+				string category = args.ContainsKey("category") ? args["category"].ToString() : "Unknown category";
+				string heldAt = args.ContainsKey("heldAt") ? args["heldAt"].ToString() : "Unknown time";
+				CPH.LogInfo(
+					$"TLG LOG: AutoMod denied => user '{user}', rawInput='{input}', " +
+					$"category='{category}', keywordsFound='{matchedKeywordCount}', " +
+					$"TLD='{globalEndingCheck}'"
+				);
+			}
+			catch (Exception ex)
+			{
+				CPH.LogError($"TLG LOG: Error handling auto-held message for '{user}': {ex.Message}");
+			}
+
+			return true; // Prevent further moderation steps
+		}
+
         return true;
     }
 }
