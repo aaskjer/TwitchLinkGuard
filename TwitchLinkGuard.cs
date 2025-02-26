@@ -36,6 +36,21 @@ public class CPHInline
         UnicodeCategory.EnclosingMark
     };
 
+    // Precompiled Regex pattern to detect user mentions
+    private static readonly Regex MentionRegex = new Regex(@"@\w+", RegexOptions.Compiled);
+
+	// Method to extract mentioned users from a message
+	private List<string> ExtractMentionedUsers(string message)
+	{
+		var matches = MentionRegex.Matches(message)
+								  .Cast<Match>() // Cast to IEnumerable<Match>
+								  .Select(m => m.Value.TrimStart('@').ToLower())
+								  .Distinct()
+								  .ToList();
+		return matches;
+	}
+
+
     ///////////////////////////////////////////////////////////////////////////////
     // Removes combining/diacritical marks
     ///////////////////////////////////////////////////////////////////////////////
@@ -227,6 +242,8 @@ public class CPHInline
 
         bool sendAction = false;
         CPH.TryGetArg("sendAction", out sendAction);
+
+        bool fallback = args.ContainsKey("fallback") ? bool.Parse(args["fallback"].ToString()) : true;
 
         bool useBot = false;
         CPH.TryGetArg("useBot", out useBot);
@@ -433,272 +450,355 @@ public class CPHInline
         //----------------------------------------------------------------
         // 7) Additional messages
         //----------------------------------------------------------------
-        string msgUrlDeleteTemplate   	= args.ContainsKey("msgUrlDelete")   ? args["msgUrlDelete"].ToString()   : "";
-        string msgUrlDelete           	= msgUrlDeleteTemplate.Replace("{user}", user);
-        string msgUrlBanTemplate      	= args.ContainsKey("msgUrlBan")      ? args["msgUrlBan"].ToString()      : "";
-        string msgUrlBan              	= msgUrlBanTemplate.Replace("{user}", user);
-        string msgObfuscatedTemplate   	= args.ContainsKey("msgObfuscated")   ? args["msgObfuscated"].ToString()   : "";
-        string msgObfuscated           	= msgObfuscatedTemplate.Replace("{user}", user);
-        string msgObfuscatedBanTemplate = args.ContainsKey("msgObfuscatedBan") ? args["msgObfuscatedBan"].ToString() : "";
-        string msgObfuscatedBan         = msgObfuscatedBanTemplate.Replace("{user}", user);
-        string msgIsBlockedTemplate   	= args.ContainsKey("msgIsBlocked")   ? args["msgIsBlocked"].ToString()   : "";
-        string msgIsBlocked           	= msgIsBlockedTemplate.Replace("{user}", user);
-        string msgIsBlockedBanTemplate 	= args.ContainsKey("msgIsBlockedBan") ? args["msgIsBlockedBan"].ToString() : "";
-        string msgIsBlockedBan         	= msgIsBlockedBanTemplate.Replace("{user}", user);
-        string msgTwitchWarnTemplate 	= args.ContainsKey("msgTwitchWarn") ? args["msgTwitchWarn"].ToString() : "";
-        string msgTwitchWarn         	= msgTwitchWarnTemplate.Replace("{user}", user);
-        string msgVoucherBanTemplate 	= args.ContainsKey("msgVoucherBan") ? args["msgVoucherBan"].ToString() : "";
-        string msgVoucherBan         	= msgVoucherBanTemplate.Replace("{user}", user);
-        string msgTimeOutTemplate 		= args.ContainsKey("msgTimeOut") ? args["msgTimeOut"].ToString() : "";
-        string msgTimeOut         		= msgTimeOutTemplate.Replace("{user}", user);
+		// Get the flag for disabling chat messages.
+		bool disableAllMessages = args.ContainsKey("disableAllMessages") && Convert.ToBoolean(args["disableAllMessages"]);
 
-        //----------------------------------------------------------------
-        // 8) Check for voucher codes => punish only if hasEnoughKeywords
-        //----------------------------------------------------------------
-        MatchCollection voucherMatches = VoucherCodeRegex.Matches(input);
-        if (voucherMatches.Count > 0)
-        {
-            foreach (Match match in voucherMatches)
-            {
-                string voucherCode = match.Value;
-                CPH.LogInfo($"TLG LOG: Detected voucher code: '{voucherCode}'");
+		// Prepare message templates with replacement.
+		string msgVoucherBanTemplate    = args.ContainsKey("msgVoucherBan") ? args["msgVoucherBan"].ToString() : "";
+		string msgVoucherBan            = msgVoucherBanTemplate.Replace("{user}", user);
+		string msgUrlDeleteTemplate     = args.ContainsKey("msgUrlDelete") ? args["msgUrlDelete"].ToString() : "";
+		string msgUrlDelete             = msgUrlDeleteTemplate.Replace("{user}", user);
+		string msgUrlBanTemplate        = args.ContainsKey("msgUrlBan") ? args["msgUrlBan"].ToString() : "";
+		string msgUrlBan                = msgUrlBanTemplate.Replace("{user}", user);
+		string msgObfuscatedTemplate    = args.ContainsKey("msgObfuscated") ? args["msgObfuscated"].ToString() : "";
+		string msgObfuscated            = msgObfuscatedTemplate.Replace("{user}", user);
+		string msgObfuscatedBanTemplate = args.ContainsKey("msgObfuscatedBan") ? args["msgObfuscatedBan"].ToString() : "";
+		string msgObfuscatedBan         = msgObfuscatedBanTemplate.Replace("{user}", user);
+		string msgIsBlockedTemplate     = args.ContainsKey("msgIsBlocked") ? args["msgIsBlocked"].ToString() : "";
+		string msgIsBlocked             = msgIsBlockedTemplate.Replace("{user}", user);
+		string msgIsBlockedBanTemplate  = args.ContainsKey("msgIsBlockedBan") ? args["msgIsBlockedBan"].ToString() : "";
+		string msgIsBlockedBan          = msgIsBlockedBanTemplate.Replace("{user}", user);
+		string msgAutoDenyBanTemplate   = args.ContainsKey("msgAutoDenyBan") ? args["msgAutoDenyBan"].ToString() : "";
+		string msgAutoDenyBan           = msgAutoDenyBanTemplate.Replace("{user}", user);
+		string msgTwitchWarnTemplate    = args.ContainsKey("msgTwitchWarn") ? args["msgTwitchWarn"].ToString() : "";
+		string msgTwitchWarn            = msgTwitchWarnTemplate.Replace("{user}", user);
+		string msgTimeOutTemplate       = args.ContainsKey("msgTimeOut") ? args["msgTimeOut"].ToString() : "";
+		string msgTimeOut               = msgTimeOutTemplate.Replace("{user}", user).Replace("{duration}", duration.ToString());
+		string msgMentionTimeOutTemplate = args.ContainsKey("msgMentionTimeOut") ? args["msgMentionTimeOut"].ToString() : "";
+		string msgMentionTimeOut        = msgMentionTimeOutTemplate.Replace("{user}", user).Replace("{duration}", duration.ToString());
+		string msgMentionBanTemplate    = args.ContainsKey("msgMentionBan") ? args["msgMentionBan"].ToString() : "";
+		string msgMentionBan            = msgMentionBanTemplate.Replace("{user}", user);
 
-                if (hasEnoughKeywords)
-                {
-                    // Build reason
+
+		//----------------------------------------------------------------
+		// 8) Check for voucher codes => punish only if hasEnoughKeywords
+		//----------------------------------------------------------------
+		MatchCollection voucherMatches = VoucherCodeRegex.Matches(input);
+		if (voucherMatches.Count > 0)
+		{
+			foreach (Match match in voucherMatches)
+			{
+				string voucherCode = match.Value;
+				CPH.LogInfo($"TLG LOG: Detected voucher code: '{voucherCode}'");
+
+				if (hasEnoughKeywords)
+				{
+					// Build reason
 					string voucherReason = $"Voucher-Code detected. Message: \"{input}\" " +
 										   $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
 										   $"TLD: {(globalEndingCheck ?? "None")}";
 
-                    // If useTimeout => do timeout. Otherwise => ban
-                    if (useTimeout)
-                    {
-                        // Timeout
-                        if (sendAction)
-                            CPH.SendAction(msgTimeOut, useBot);
-                        else
-                            CPH.SendMessage(msgTimeOut, useBot);
-
-                        CPH.TwitchTimeoutUser(user, duration, voucherReason, useBot);
-                        CPH.LogInfo($"TLG LOG: Timed out '{user}' => voucher + enough keywords. Reason: {voucherReason}");
-                    }
-                    else
-                    {
-                        // Ban
-                        if (sendAction)
-                            CPH.SendAction(msgVoucherBan, useBot);
-                        else
-                            CPH.SendMessage(msgVoucherBan, useBot);
-
-                        CPH.TwitchBanUser(user, voucherReason, useBot);
-                        CPH.LogInfo($"TLG LOG: Banned '{user}' => voucher + enough keywords. Reason: {voucherReason}");
-                    }
-                }
-                else
-                {
-                    // Possibly just warn or skip
-                    if (useTwitchWarnFlag)
-                    {
-                        CPH.TwitchWarnUser(user, msgTwitchWarn);
-                        CPH.LogInfo($"TLG LOG: Warned '{user}' => voucher code, but not enough keywords");
-                    }
-                }
-                return true;
-            }
-        }
-
-        //----------------------------------------------------------------
-        // 9) Twitch-blocked (***)
-        //----------------------------------------------------------------
-        if (IsBlockedByTwitch(input))
-        {
-            if (hasEnoughKeywords)
-            {
-                string blockedBanReason =
-                    $"Flagged as potential advertising spam message: \"{input}\"" +
-                    $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
-                    $"TLD: {(globalEndingCheck ?? "None")}";
-
-                if (useTimeout)
-                {
-                    // Timeout
-                    if (sendAction)
-                        CPH.SendAction(msgTimeOut, useBot);
-                    else
-                        CPH.SendMessage(msgTimeOut, useBot);
-
-                    CPH.TwitchTimeoutUser(user, duration, blockedBanReason, useBot);
-                    CPH.LogInfo($"TLG LOG: Timed out '{user}' => *** + enough keywords. Reason: {blockedBanReason}");
-                }
-                else
-                {
-                    // Ban
-                    if (sendAction)
-                        CPH.SendAction(msgUrlBan, useBot);
-                    else
-                        CPH.SendMessage(msgUrlBan, useBot);
-
-                    CPH.TwitchBanUser(user, blockedBanReason, useBot);
-                    CPH.LogInfo($"TLG LOG: Banned '{user}' => *** + enough keywords. Reason: {blockedBanReason}");
-                }
-                return true;
-            }
-            else
-            {
-                // Just delete or warn
-                CPH.TwitchDeleteChatMessage(messageId, true);
-                if (sendAction)
-                    CPH.SendAction(msgIsBlocked, useBot);
-                else
-                    CPH.SendMessage(msgIsBlocked, useBot);
-
-                if (useTwitchWarnFlag)
-                {
-                    CPH.TwitchWarnUser(user, msgTwitchWarn);
-                    CPH.LogInfo($"TLG LOG: Warned '{user}' => *** but not enough keywords.");
-                }
-            }
-            return true;
-        }
-
-        //----------------------------------------------------------------
-        // 10) Check for actual URLs
-        //----------------------------------------------------------------
-        MatchCollection urlMatches = UrlRegex.Matches(input);
-        if (urlMatches.Count > 0)
-        {
-            foreach (Match m in urlMatches)
-            {
-                string url = m.Value;
-
-                // If whitelisted => skip entirely
-                if (IsWhitelistedUrl(url, whitelist))
-                {
-                    CPH.LogInfo($"TLG LOG: URL '{url}' is whitelisted => skip moderation.");
-                    return true;
-                }
-
-                // If hasEnoughKeywords => ban or timeout
-                if (hasEnoughKeywords)
-                {
-                    // Build reason
-                    string reason =
-                        $"Flagged as potential advertising spam message: \"{input}\" " +
-                        $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
-                        $"TLD: {(globalEndingCheck ?? "None")}";
-
-                    if (useTimeout)
-                    {
-                        // Timeout
-                        if (sendAction)
-                            CPH.SendAction(msgTimeOut, useBot);
-                        else
-                            CPH.SendMessage(msgTimeOut, useBot);
-
-                        CPH.TwitchTimeoutUser(user, duration, reason, useBot);
-                        CPH.LogInfo($"TLG LOG: Timed out '{user}' => URL + enough keywords. Reason: {reason}");
-                    }
-                else
-                {
-                        // Ban
-                        if (sendAction)
-                            CPH.SendAction(msgUrlBan, useBot);
-                        else
-                            CPH.SendMessage(msgUrlBan, useBot);
-
-                        CPH.TwitchBanUser(user, reason, useBot);
-                        CPH.LogInfo($"TLG LOG: Banned '{user}' => URL + enough keywords. Reason: {reason}");
-                    }
-                    return true;
-                }
-                else
-                {
-                    // Not enough keywords for ban or timeout
-                    // If TLD is suspicious => maybe delete or warn
-                    if (!string.IsNullOrEmpty(globalEndingCheck))
-                    {
-                        if (sendAction)
-                            CPH.SendAction(msgUrlDelete, useBot);
-                        else
-                            CPH.SendMessage(msgUrlDelete, useBot);
-
-                        CPH.TwitchDeleteChatMessage(messageId, useBot);
-
-                        if (useTwitchWarnFlag)
-                        {
-                            CPH.TwitchWarnUser(user, msgTwitchWarn);
-                            CPH.LogInfo($"TLG LOG: Warned '{user}' => suspicious TLD but not enough keywords.");
-                        }
-                    }
-                    else
-                    {
-                        // Otherwise skip or do nothing
-                        CPH.LogInfo($"TLG LOG: URL found but not enough keywords => skip/ignore");
-                    }
-                }
-                return true;
-            }
-        }
-
-        //----------------------------------------------------------------
-        // 11) Check obfuscated => ban/timeout only if hasEnoughKeywords
-        //----------------------------------------------------------------
-        if (globalObfuscated)
-        {
-            if (hasEnoughKeywords)
-            {
-                string obfuscatedBanReason =
-                    $"Obfuscation detected, flagged as potential advertising spam message: \"{input}\" " +
-                    $"Matched: [{string.Join(", ", matchedKeywords)}]. " +
-                    $"TLD: {(globalEndingCheck ?? "None")}";
-
-                if (useTimeout)
-                {
-                    // Timeout
-                    if (sendAction)
-                        CPH.SendAction(msgTimeOut, useBot);
-                    else
-                        CPH.SendMessage(msgTimeOut, useBot);
-
-                    CPH.TwitchTimeoutUser(user, duration, obfuscatedBanReason, useBot);
-                    CPH.LogInfo($"TLG LOG: Timed out '{user}' => obfuscated + enough keywords. Reason: {obfuscatedBanReason}");
-                }
-                else
-                {
-                    // Ban
-                    if (sendAction)
-                        CPH.SendAction(msgObfuscatedBan, useBot);
-                    else
-                        CPH.SendMessage(msgObfuscatedBan, useBot);
-
-                    CPH.TwitchBanUser(user, obfuscatedBanReason, useBot);
-                    CPH.LogInfo($"TLG LOG: Banned '{user}' => obfuscated + enough keywords. Reason: {obfuscatedBanReason}");
-                }
-            }
-            else
-            {
-                // Possibly delete or warn
-                if (!string.IsNullOrEmpty(globalEndingCheck))
-                {
-                    if (sendAction)
-                        CPH.SendAction(msgObfuscated, useBot);
-                    else
-                        CPH.SendMessage(msgObfuscated, useBot);
-
-                    CPH.TwitchDeleteChatMessage(messageId, true);
-                }
-
-                if (useTwitchWarnFlag)
-                {
-                    CPH.TwitchWarnUser(user, msgTwitchWarn);
-                    CPH.LogInfo($"TLG LOG: Warned '{user}' => obfuscated link but not enough keywords");
-                }
-            }
-            return true;
-        }
+					// If useTimeout => do timeout. Otherwise => ban
+					if (useTimeout)
+					{
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgTimeOut, useBot, fallback);
+							else
+								CPH.SendMessage(msgTimeOut, useBot, fallback);
+						}
+						CPH.TwitchTimeoutUser(user, duration, voucherReason, useBot);
+						CPH.LogInfo($"TLG LOG: Timed out '{user}' => voucher + enough keywords. Reason: {voucherReason}");
+					}
+					else
+					{
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgVoucherBan, useBot, fallback);
+							else
+								CPH.SendMessage(msgVoucherBan, useBot, fallback);
+						}
+						CPH.TwitchBanUser(user, voucherReason, useBot);
+						CPH.LogInfo($"TLG LOG: Banned '{user}' => voucher + enough keywords. Reason: {voucherReason}");
+					}
+				}
+				else
+				{
+					// Possibly just warn or skip
+					if (useTwitchWarnFlag)
+					{
+						if (!disableAllMessages)
+							CPH.TwitchWarnUser(user, msgTwitchWarn);
+						CPH.LogInfo($"TLG LOG: Warned '{user}' => voucher code, but not enough keywords");
+					}
+				}
+				return true;
+			}
+		}
 
 		//----------------------------------------------------------------
-		// 12) Handle Auto-Held Messages with Updated Logic
+		// 9) Twitch-blocked (***)
+		//----------------------------------------------------------------
+		if (IsBlockedByTwitch(input))
+		{
+			if (hasEnoughKeywords)
+			{
+				string blockedBanReason =
+					$"Flagged as potential advertising spam message: \"{input}\"" +
+					$"Matched: [{string.Join(", ", matchedKeywords)}]. " +
+					$"TLD: {(globalEndingCheck ?? "None")}";
+
+				if (useTimeout)
+				{
+					if (!disableAllMessages)
+					{
+						if (sendAction)
+							CPH.SendAction(msgTimeOut, useBot, fallback);
+						else
+							CPH.SendMessage(msgTimeOut, useBot, fallback);
+					}
+					CPH.TwitchTimeoutUser(user, duration, blockedBanReason, useBot);
+					CPH.LogInfo($"TLG LOG: Timed out '{user}' => *** + enough keywords. Reason: {blockedBanReason}");
+				}
+				else
+				{
+					if (!disableAllMessages)
+					{
+						if (sendAction)
+							CPH.SendAction(msgUrlBan, useBot, fallback);
+						else
+							CPH.SendMessage(msgUrlBan, useBot, fallback);
+					}
+					CPH.TwitchBanUser(user, blockedBanReason, useBot);
+					CPH.LogInfo($"TLG LOG: Banned '{user}' => *** + enough keywords. Reason: {blockedBanReason}");
+				}
+				return true;
+			}
+			else
+			{
+				// Just delete or warn
+				CPH.TwitchDeleteChatMessage(messageId, true);
+				if (!disableAllMessages)
+				{
+					if (sendAction)
+						CPH.SendAction(msgIsBlocked, useBot, fallback);
+					else
+						CPH.SendMessage(msgIsBlocked, useBot, fallback);
+				}
+
+				if (useTwitchWarnFlag)
+				{
+					if (!disableAllMessages)
+						CPH.TwitchWarnUser(user, msgTwitchWarn);
+					CPH.LogInfo($"TLG LOG: Warned '{user}' => *** but not enough keywords.");
+				}
+			}
+			return true;
+		}
+
+		//----------------------------------------------------------------
+		// 10) Check for actual URLs
+		//----------------------------------------------------------------
+		MatchCollection urlMatches = UrlRegex.Matches(input);
+		if (urlMatches.Count > 0)
+		{
+			foreach (Match m in urlMatches)
+			{
+				string url = m.Value;
+
+				// If whitelisted => skip entirely
+				if (IsWhitelistedUrl(url, whitelist))
+				{
+					CPH.LogInfo($"TLG LOG: URL '{url}' is whitelisted => skip moderation.");
+					return true;
+				}
+
+				// If hasEnoughKeywords => ban or timeout
+				if (hasEnoughKeywords)
+				{
+					// Build reason
+					string reason =
+						$"Flagged as potential advertising spam message: \"{input}\" " +
+						$"Matched: [{string.Join(", ", matchedKeywords)}]. " +
+						$"TLD: {(globalEndingCheck ?? "None")}";
+
+					if (useTimeout)
+					{
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgTimeOut, useBot, fallback);
+							else
+								CPH.SendMessage(msgTimeOut, useBot, fallback);
+						}
+						CPH.TwitchTimeoutUser(user, duration, reason, useBot);
+						CPH.LogInfo($"TLG LOG: Timed out '{user}' => URL + enough keywords. Reason: {reason}");
+					}
+					else
+					{
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgUrlBan, useBot, fallback);
+							else
+								CPH.SendMessage(msgUrlBan, useBot, fallback);
+						}
+						CPH.TwitchBanUser(user, reason, useBot);
+						CPH.LogInfo($"TLG LOG: Banned '{user}' => URL + enough keywords. Reason: {reason}");
+					}
+					return true;
+				}
+				else
+				{
+					// Not enough keywords for ban or timeout
+					// If TLD is suspicious => maybe delete or warn
+					if (!string.IsNullOrEmpty(globalEndingCheck))
+					{
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgUrlDelete, useBot, fallback);
+							else
+								CPH.SendMessage(msgUrlDelete, useBot, fallback);
+						}
+						CPH.TwitchDeleteChatMessage(messageId, useBot);
+
+						if (useTwitchWarnFlag)
+						{
+							if (!disableAllMessages)
+								CPH.TwitchWarnUser(user, msgTwitchWarn);
+							CPH.LogInfo($"TLG LOG: Warned '{user}' => suspicious TLD but not enough keywords.");
+						}
+					}
+					else
+					{
+						// Otherwise skip or do nothing
+						CPH.LogInfo($"TLG LOG: URL found but not enough keywords => skip/ignore");
+					}
+				}
+				return true;
+			}
+		}
+
+		//----------------------------------------------------------------
+		// 11) Check for mentions of non-present users with suspicious content
+		//----------------------------------------------------------------
+		if (hasEnoughKeywords || urlMatches.Count > 0)
+		{
+			// Extract mentioned usernames from the message
+			var mentionedUsers = Regex.Matches(input, @"@(\w+)")
+									  .Cast<Match>()
+									  .Select(m => m.Groups[1].Value.ToLowerInvariant())
+									  .ToList();
+
+			if (mentionedUsers.Count > 0)
+			{
+				// Since we don't have CPH.TwitchGetChatUsers(), just compare against "user"
+				bool mentionedNonPresentUser = mentionedUsers.Any(mentionedUser => !mentionedUser.Equals(user, StringComparison.OrdinalIgnoreCase));
+
+				if (mentionedNonPresentUser)
+				{
+					// Construct a reason for the action
+					string mentionBanReason =
+						$"Mentioned non-present users: [{string.Join(", ", mentionedUsers)}] in message: \"{input}\" " +
+						$"Matched keywords: [{string.Join(", ", matchedKeywords)}]. " +
+						$"TLD: {(globalEndingCheck ?? "None")}";
+
+					if (useTimeout)
+					{
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgMentionTimeOut, useBot, fallback);
+							else
+								CPH.SendMessage(msgMentionTimeOut, useBot, fallback);
+						}
+						CPH.TwitchTimeoutUser(user, duration, mentionBanReason, useBot);
+						CPH.LogInfo($"TLG LOG: Timed out '{user}' for mentioning non-present users with suspicious content. Reason: {mentionBanReason}");
+					}
+					else
+					{
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgMentionBan, useBot, fallback);
+							else
+								CPH.SendMessage(msgMentionBan, useBot, fallback);
+						}
+						CPH.TwitchBanUser(user, mentionBanReason, useBot);
+						CPH.LogInfo($"TLG LOG: Banned '{user}' for mentioning non-present users with suspicious content. Reason: {mentionBanReason}");
+					}
+					return true;
+				}
+			}
+		}
+
+		//----------------------------------------------------------------
+		// 12) Check obfuscated => ban/timeout only if hasEnoughKeywords
+		//----------------------------------------------------------------
+		if (globalObfuscated)
+		{
+			if (hasEnoughKeywords)
+			{
+				string obfuscatedBanReason =
+					$"Obfuscation detected, flagged as potential advertising spam message: \"{input}\" " +
+					$"Matched: [{string.Join(", ", matchedKeywords)}]. " +
+					$"TLD: {(globalEndingCheck ?? "None")}";
+
+				if (useTimeout)
+				{
+					if (!disableAllMessages)
+					{
+						if (sendAction)
+							CPH.SendAction(msgTimeOut, useBot, fallback);
+						else
+							CPH.SendMessage(msgTimeOut, useBot, fallback);
+					}
+					CPH.TwitchTimeoutUser(user, duration, obfuscatedBanReason, useBot);
+					CPH.LogInfo($"TLG LOG: Timed out '{user}' => obfuscated + enough keywords. Reason: {obfuscatedBanReason}");
+				}
+				else
+				{
+					if (!disableAllMessages)
+					{
+						if (sendAction)
+							CPH.SendAction(msgObfuscatedBan, useBot, fallback);
+						else
+							CPH.SendMessage(msgObfuscatedBan, useBot, fallback);
+					}
+					CPH.TwitchBanUser(user, obfuscatedBanReason, useBot);
+					CPH.LogInfo($"TLG LOG: Banned '{user}' => obfuscated + enough keywords. Reason: {obfuscatedBanReason}");
+				}
+			}
+			else
+			{
+				// Possibly delete or warn
+				if (!string.IsNullOrEmpty(globalEndingCheck))
+				{
+					if (!disableAllMessages)
+					{
+						if (sendAction)
+							CPH.SendAction(msgObfuscated, useBot, fallback);
+						else
+							CPH.SendMessage(msgObfuscated, useBot, fallback);
+					}
+					CPH.TwitchDeleteChatMessage(messageId, true);
+				}
+
+				if (useTwitchWarnFlag)
+				{
+					if (!disableAllMessages)
+						CPH.TwitchWarnUser(user, msgTwitchWarn);
+					CPH.LogInfo($"TLG LOG: Warned '{user}' => obfuscated link but not enough keywords");
+				}
+			}
+			return true;
+		}
+
+		//----------------------------------------------------------------
+		// 13) Handle Auto-Held Messages with Updated Logic
 		//----------------------------------------------------------------
 		if (!string.IsNullOrEmpty(messageId) && CPH.TwitchApproveAutoHeldMessage(messageId))
 		{
@@ -721,7 +821,7 @@ public class CPHInline
 				if (!CPH.TwitchDenyAutoHeldMessage(messageId))
 				{
 					CPH.LogError($"TLG LOG: Failed to deny auto-held message with ID: {messageId}");
-					return true; // Stop further handling if denial fails
+					return true;
 				}
 
 				// Delete the denied message
@@ -732,46 +832,48 @@ public class CPHInline
 				{
 					if (useTimeout)
 					{
-						// Timeout logic
-						if (sendAction)
-							CPH.SendAction(msgTimeOut, useBot);
-						else
-							CPH.SendMessage(msgTimeOut, useBot);
-
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgTimeOut, useBot, fallback);
+							else
+								CPH.SendMessage(msgTimeOut, useBot, fallback);
+						}
 						CPH.TwitchTimeoutUser(user, duration, denyAutoReason, useBot);
 						CPH.LogInfo($"TLG LOG: Timed out '{user}' => auto-held + {matchedKeywordCount} keywords. Reason: {denyAutoReason}");
 					}
 					else
 					{
-						// Ban logic
-						if (sendAction)
-							CPH.SendAction(msgUrlBan, useBot);
-						else
-							CPH.SendMessage(msgUrlBan, useBot);
-
+						if (!disableAllMessages)
+						{
+							if (sendAction)
+								CPH.SendAction(msgAutoDenyBan, useBot, fallback);
+							else
+								CPH.SendMessage(msgAutoDenyBan, useBot, fallback);
+						}
 						CPH.TwitchBanUser(user, denyAutoReason, useBot);
 						CPH.LogInfo($"TLG LOG: Banned '{user}' => auto-held + {matchedKeywordCount} keywords. Reason: {denyAutoReason}");
 					}
 				}
 				else if (!string.IsNullOrEmpty(globalEndingCheck))
 				{
-					// Handle suspicious TLD without enough keywords
-					if (sendAction)
-						CPH.SendAction(msgUrlDelete, useBot);
-					else
-						CPH.SendMessage(msgUrlDelete, useBot);
-
+					if (!disableAllMessages)
+					{
+						if (sendAction)
+							CPH.SendAction(msgUrlDelete, useBot, fallback);
+						else
+							CPH.SendMessage(msgUrlDelete, useBot, fallback);
+					}
 					if (useTwitchWarnFlag)
 					{
-						CPH.TwitchWarnUser(user, msgTwitchWarn);
+						if (!disableAllMessages)
+							CPH.TwitchWarnUser(user, msgTwitchWarn);
 						CPH.LogInfo($"TLG LOG: Warned '{user}' => suspicious TLD '{globalEndingCheck}' but not enough keywords.");
 					}
-
 					CPH.LogInfo($"TLG LOG: Auto-held message denied and deleted for TLD '{globalEndingCheck}' without enough keywords.");
 				}
 				else
 				{
-					// Log only if neither keywords nor TLD trigger further action
 					CPH.LogInfo($"TLG LOG: Auto-held message denied and deleted. No action taken (keywords/TLD insufficient).");
 				}
 
@@ -789,9 +891,9 @@ public class CPHInline
 				CPH.LogError($"TLG LOG: Error handling auto-held message for '{user}': {ex.Message}");
 			}
 
-			return true; // Prevent further moderation steps
+			return true;
 		}
 
-        return true;
-    }
+		return true;
+	}
 }
